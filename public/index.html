@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Scrum Poker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <div class="logo-cards">
+        <span class="logo-card">5</span>
+        <span class="logo-card accent">8</span>
+        <span class="logo-card">13</span>
+      </div>
+      <h1>Scrum Poker</h1>
+      <p class="subtitle">Fast, simple planning poker</p>
+    </div>
+
+    <div class="form-section">
+      <label for="name">Your Name</label>
+      <input type="text" id="name" placeholder="Enter your name" autocomplete="off" maxlength="20">
+    </div>
+
+    <div class="actions">
+      <button id="create-btn" class="btn btn-primary">Create Room</button>
+
+      <div class="divider"><span>or join existing</span></div>
+
+      <div class="join-row">
+        <input type="text" id="room-code" placeholder="Room code" autocomplete="off" maxlength="4" class="code-input">
+        <button id="join-btn" class="btn btn-secondary">Join</button>
+      </div>
+    </div>
+
+    <p id="error" class="error"></p>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const nameInput = document.getElementById('name');
+    const codeInput = document.getElementById('room-code');
+    const errorEl = document.getElementById('error');
+
+    // Auto-fill room code from URL param
+    const urlCode = new URLSearchParams(location.search).get('room');
+    if (urlCode) codeInput.value = urlCode.toUpperCase();
+
+    codeInput.addEventListener('input', () => {
+      codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    });
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      setTimeout(() => errorEl.textContent = '', 3000);
+    }
+
+    function getName() {
+      const name = nameInput.value.trim();
+      if (!name) { showError('Please enter your name'); nameInput.focus(); return null; }
+      return name;
+    }
+
+    document.getElementById('create-btn').addEventListener('click', () => {
+      const name = getName();
+      if (!name) return;
+      socket.emit('create-room', name, (res) => {
+        if (res.error) return showError(res.error);
+        sessionStorage.setItem('poker-name', name);
+        sessionStorage.setItem('poker-room', res.code);
+        location.href = `/room.html?room=${res.code}`;
+      });
+    });
+
+    document.getElementById('join-btn').addEventListener('click', () => {
+      const name = getName();
+      if (!name) return;
+      const code = codeInput.value.trim().toUpperCase();
+      if (!code || code.length !== 4) { showError('Enter a 4-letter room code'); return; }
+      sessionStorage.setItem('poker-name', name);
+      sessionStorage.setItem('poker-room', code);
+      location.href = `/room.html?room=${code}`;
+    });
+
+    // Allow Enter key to submit
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (codeInput.value.trim()) document.getElementById('join-btn').click();
+        else document.getElementById('create-btn').click();
+      }
+    });
+    codeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('join-btn').click();
+    });
+  </script>
+</body>
+</html>
