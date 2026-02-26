@@ -1,16 +1,15 @@
 {
   "name": "scrum-poker",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Mobile-first scrum poker web app",
-  "main": "server.js",
+  "private": true,
   "scripts": {
-    "start": "node server.js"
+    "dev": "vercel dev"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^4.21.0",
-    "socket.io": "^4.8.0"
+    "@vercel/kv": "^3.0.0"
   }
 }
