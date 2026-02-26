@@ -1,89 +1,49 @@
-import { kv } from '@vercel/kv';
+import { getRoom, getRoomState } from '../_lib/rooms.js';
 
-export const config = { runtime: 'edge' };
+export const config = {
+  maxDuration: 60,
+};
 
-function getRoomState(room) {
-  const participants = [];
-  for (const [id, p] of Object.entries(room.participants)) {
-    participants.push({
-      id,
-      name: p.name,
-      vote: room.revealed ? p.vote : null,
-      hasVoted: p.vote !== null,
-    });
-  }
+export default async function handler(req, res) {
+  if (req.method !== 'GET') return res.status(405).end('Method not allowed');
 
-  let average = null;
-  if (room.revealed) {
-    const numericVotes = participants
-      .map(p => parseFloat(p.vote))
-      .filter(v => !isNaN(v));
-    if (numericVotes.length > 0) {
-      average = Math.round((numericVotes.reduce((a, b) => a + b, 0) / numericVotes.length) * 10) / 10;
-    }
-  }
-
-  return {
-    scrumMaster: room.scrumMaster,
-    revealed: room.revealed,
-    participants,
-    average,
-  };
-}
-
-export default async function handler(req) {
-  if (req.method !== 'GET') {
-    return new Response('Method not allowed', { status: 405 });
-  }
-
-  const { searchParams } = new URL(req.url);
-  const roomCode = searchParams.get('room');
-  if (!roomCode) {
-    return new Response('Missing room param', { status: 400 });
-  }
+  const roomCode = req.query.room;
+  if (!roomCode) return res.status(400).end('Missing room param');
 
   const code = roomCode.toUpperCase().trim();
-  const encoder = new TextEncoder();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const MAX_DURATION = 55000;
+  const POLL_INTERVAL = 500;
+  const start = Date.now();
   let lastUpdatedAt = 0;
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const MAX_DURATION = 25000;
-      const POLL_INTERVAL = 500;
-      const start = Date.now();
-
-      while (Date.now() - start < MAX_DURATION) {
-        try {
-          const room = await kv.get(`room:${code}`);
-          if (!room) {
-            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: 'Room not found' })}\n\n`));
-            controller.close();
-            return;
-          }
-
-          if (room.updatedAt !== lastUpdatedAt) {
-            lastUpdatedAt = room.updatedAt;
-            const state = getRoomState(room);
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(state)}\n\n`));
-          }
-        } catch (e) {
-          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: 'Server error' })}\n\n`));
-          controller.close();
-          return;
-        }
-
-        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+  while (Date.now() - start < MAX_DURATION) {
+    try {
+      const room = await getRoom(code);
+      if (!room) {
+        res.write(`event: error\ndata: ${JSON.stringify({ error: 'Room not found' })}\n\n`);
+        res.end();
+        return;
       }
 
-      controller.close();
-    },
-  });
+      if (room.updatedAt !== lastUpdatedAt) {
+        lastUpdatedAt = room.updatedAt;
+        const state = getRoomState(room);
+        res.write(`data: ${JSON.stringify(state)}\n\n`);
+      }
+    } catch (e) {
+      res.write(`event: error\ndata: ${JSON.stringify({ error: 'Server error' })}\n\n`);
+      res.end();
+      return;
+    }
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    },
-  });
+    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+  }
+
+  res.end();
 }

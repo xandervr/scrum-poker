@@ -3,6 +3,7 @@
   "version": "2.0.0",
   "description": "Mobile-first scrum poker web app",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vercel dev"
   },
@@ -10,6 +11,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@vercel/kv": "^3.0.0"
+    "ioredis": "^5.9.3"
   }
 }

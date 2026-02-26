@@ -1,7 +1,15 @@
-import { kv } from '@vercel/kv';
+import Redis from 'ioredis';
 
 const ROOM_TTL = 60 * 60 * 24; // 24 hours
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+let redis;
+export function getRedis() {
+  if (!redis) {
+    redis = new Redis(process.env.REDIS_URL);
+  }
+  return redis;
+}
 
 export async function generateCode() {
   let code;
@@ -16,12 +24,13 @@ export async function generateCode() {
 }
 
 export async function getRoom(code) {
-  return await kv.get(`room:${code}`);
+  const data = await getRedis().get(`room:${code}`);
+  return data ? JSON.parse(data) : null;
 }
 
 export async function setRoom(code, room) {
   room.updatedAt = Date.now();
-  await kv.set(`room:${code}`, room, { ex: ROOM_TTL });
+  await getRedis().set(`room:${code}`, JSON.stringify(room), 'EX', ROOM_TTL);
 }
 
 export function getRoomState(room) {
