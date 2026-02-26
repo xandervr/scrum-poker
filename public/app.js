@@ -10,10 +10,10 @@ if (!roomCode) {
 
 // Player identity
 function getPlayerId() {
-  let id = sessionStorage.getItem('poker-player-id');
+  let id = localStorage.getItem('poker-player-id');
   if (!id) {
     id = crypto.randomUUID();
-    sessionStorage.setItem('poker-player-id', id);
+    localStorage.setItem('poker-player-id', id);
   }
   return id;
 }
@@ -36,6 +36,7 @@ const clearBtn = document.getElementById('clear-btn');
 const resultsBanner = document.getElementById('results-banner');
 const averageValue = document.getElementById('average-value');
 const shareBtn = document.getElementById('share-btn');
+const leaveBtn = document.getElementById('leave-btn');
 const toast = document.getElementById('toast');
 
 // Init
@@ -216,6 +217,21 @@ revealBtn.addEventListener('click', () => api('reveal'));
 clearBtn.addEventListener('click', () => {
   selectedVote = null;
   api('clear');
+});
+
+// Leave
+function leaveRoom() {
+  if (eventSource) eventSource.close();
+  navigator.sendBeacon(
+    `/api/rooms/leave`,
+    new Blob([JSON.stringify({ roomCode, playerId })], { type: 'application/json' })
+  );
+}
+
+leaveBtn.addEventListener('click', () => {
+  leaveRoom();
+  sessionStorage.removeItem('poker-room');
+  location.href = '/';
 });
 
 // Share

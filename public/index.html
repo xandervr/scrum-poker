@@ -62,10 +62,10 @@
     }
 
     function getPlayerId() {
-      let id = sessionStorage.getItem('poker-player-id');
+      let id = localStorage.getItem('poker-player-id');
       if (!id) {
         id = crypto.randomUUID();
-        sessionStorage.setItem('poker-player-id', id);
+        localStorage.setItem('poker-player-id', id);
       }
       return id;
     }
