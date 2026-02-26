@@ -1,4 +1,3 @@
-const socket = io();
 const CARD_VALUES = ['0', '1', '2', '3', '5', '8', '13', '21', '?', '\u2615'];
 
 const roomCode = new URLSearchParams(location.search).get('room');
@@ -9,11 +8,23 @@ if (!roomCode) {
   location.href = '/';
 }
 
+// Player identity
+function getPlayerId() {
+  let id = sessionStorage.getItem('poker-player-id');
+  if (!id) {
+    id = crypto.randomUUID();
+    sessionStorage.setItem('poker-player-id', id);
+  }
+  return id;
+}
+
+const playerId = getPlayerId();
+
 // State
-let myId = null;
 let isScrumMaster = false;
 let selectedVote = null;
 let revealed = false;
+let currentScrumMaster = null;
 
 // DOM
 const roomCodeDisplay = document.getElementById('room-code-display');
@@ -31,33 +42,70 @@ const toast = document.getElementById('toast');
 roomCodeDisplay.textContent = roomCode;
 renderCards();
 
-// Connect to room
-socket.on('connect', () => {
-  myId = socket.id;
+// --- API helpers ---
 
-  if (savedRoom === roomCode && savedName) {
-    socket.emit('join-room', roomCode, savedName, handleJoin);
-  } else {
-    // No saved session — redirect to landing with room code pre-filled
-    location.href = `/?room=${roomCode}`;
-  }
-});
-
-function handleJoin(res) {
-  if (res.error) {
-    showToast(res.error);
-    setTimeout(() => location.href = '/', 1500);
-    return;
-  }
-  updateRoom(res.state);
+async function api(endpoint, body) {
+  const res = await fetch(`/api/rooms/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomCode, playerId, ...body }),
+  });
+  return res.json();
 }
 
-// Real-time updates
-socket.on('room-update', updateRoom);
+// --- Join room on load ---
+
+async function init() {
+  if (savedRoom === roomCode && savedName) {
+    const res = await api('join', { name: savedName });
+    if (res.error) {
+      showToast(res.error);
+      setTimeout(() => location.href = '/', 1500);
+      return;
+    }
+    updateRoom(res.state);
+    startStream();
+  } else {
+    location.href = `/?room=${roomCode}`;
+  }
+}
+
+// --- SSE stream ---
+
+let eventSource = null;
+
+function startStream() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource(`/api/rooms/stream?room=${roomCode}`);
+
+  eventSource.onmessage = (e) => {
+    const state = JSON.parse(e.data);
+    updateRoom(state);
+  };
+
+  eventSource.addEventListener('error', (e) => {
+    // EventSource auto-reconnects on network errors.
+    // Custom error events from our stream carry data.
+    if (e.data) {
+      const err = JSON.parse(e.data);
+      showToast(err.error || 'Connection lost');
+    }
+  });
+}
+
+// --- Room state rendering ---
 
 function updateRoom(state) {
-  isScrumMaster = state.scrumMaster === myId;
+  isScrumMaster = state.scrumMaster === playerId;
   revealed = state.revealed;
+
+  // Reset selection on clear
+  if (!revealed) {
+    const myParticipant = state.participants.find(p => p.id === playerId);
+    if (myParticipant && !myParticipant.hasVoted) {
+      selectedVote = null;
+    }
+  }
 
   renderParticipants(state.participants);
   updateControls(state);
@@ -66,28 +114,38 @@ function updateRoom(state) {
 }
 
 function renderParticipants(participants) {
-  participantsEl.innerHTML = participants.map(p => {
-    const isMe = p.id === myId;
-    const classes = ['participant'];
-    if (p.hasVoted) classes.push('voted');
-    if (isMe) classes.push('is-me');
+  const fragment = document.createDocumentFragment();
+  participants.forEach(p => {
+    const isMe = p.id === playerId;
+    const div = document.createElement('div');
+    div.className = 'participant' + (p.hasVoted ? ' voted' : '') + (isMe ? ' is-me' : '');
+    div.dataset.id = p.id;
 
-    const smBadge = isScrumMasterId(p.id) ? '<span class="sm-badge">SM</span>' : '';
-    const voteDisplay = revealed && p.vote !== null
-      ? `<span class="vote-value">${escapeHtml(p.vote)}</span>`
-      : `<span class="vote-indicator"></span>`;
+    if (revealed && p.vote !== null) {
+      const voteSpan = document.createElement('span');
+      voteSpan.className = 'vote-value';
+      voteSpan.textContent = p.vote;
+      div.appendChild(voteSpan);
+    } else {
+      const indicator = document.createElement('span');
+      indicator.className = 'vote-indicator';
+      div.appendChild(indicator);
+    }
 
-    return `<div class="${classes.join(' ')}" data-id="${p.id}">
-      ${voteDisplay}
-      <span>${escapeHtml(p.name)}</span>
-      ${smBadge}
-    </div>`;
-  }).join('');
-}
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = p.name;
+    div.appendChild(nameSpan);
 
-let currentScrumMaster = null;
-function isScrumMasterId(id) {
-  return id === currentScrumMaster;
+    if (p.id === currentScrumMaster) {
+      const badge = document.createElement('span');
+      badge.className = 'sm-badge';
+      badge.textContent = 'SM';
+      div.appendChild(badge);
+    }
+
+    fragment.appendChild(div);
+  });
+  participantsEl.replaceChildren(fragment);
 }
 
 function updateControls(state) {
@@ -113,7 +171,7 @@ function updateResults(state) {
     averageValue.textContent = state.average;
   } else if (state.revealed) {
     resultsBanner.classList.remove('hidden');
-    averageValue.textContent = '—';
+    averageValue.textContent = '\u2014';
   } else {
     resultsBanner.classList.add('hidden');
   }
@@ -127,32 +185,37 @@ function updateCardStates() {
 }
 
 function renderCards() {
-  cardsGrid.innerHTML = CARD_VALUES.map(v =>
-    `<div class="card" data-value="${escapeHtml(v)}">${escapeHtml(v)}</div>`
-  ).join('');
+  const fragment = document.createDocumentFragment();
+  CARD_VALUES.forEach(v => {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.dataset.value = v;
+    div.textContent = v;
+    fragment.appendChild(div);
+  });
+  cardsGrid.replaceChildren(fragment);
 
-  cardsGrid.addEventListener('click', (e) => {
+  cardsGrid.addEventListener('click', async (e) => {
     const card = e.target.closest('.card');
     if (!card || revealed) return;
 
     const value = card.dataset.value;
     if (selectedVote === value) {
-      // Deselect
       selectedVote = null;
-      socket.emit('vote', null);
+      await api('vote', { vote: null });
     } else {
       selectedVote = value;
-      socket.emit('vote', value);
+      await api('vote', { vote: value });
     }
     updateCardStates();
   });
 }
 
 // SM actions
-revealBtn.addEventListener('click', () => socket.emit('reveal'));
+revealBtn.addEventListener('click', () => api('reveal'));
 clearBtn.addEventListener('click', () => {
   selectedVote = null;
-  socket.emit('clear');
+  api('clear');
 });
 
 // Share
@@ -174,19 +237,5 @@ function showToast(msg) {
   setTimeout(() => toast.classList.add('hidden'), 2500);
 }
 
-// Reset selection on clear
-socket.on('room-update', (state) => {
-  if (!state.revealed) {
-    const myParticipant = state.participants.find(p => p.id === myId);
-    if (myParticipant && myParticipant.vote === null) {
-      selectedVote = null;
-    }
-  }
-});
-
-function escapeHtml(str) {
-  if (str === null || str === undefined) return '';
-  const div = document.createElement('div');
-  div.textContent = String(str);
-  return div.innerHTML;
-}
+// Start
+init();

@@ -38,14 +38,11 @@
     <p id="error" class="error"></p>
   </div>
 
-  <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io();
     const nameInput = document.getElementById('name');
     const codeInput = document.getElementById('room-code');
     const errorEl = document.getElementById('error');
 
-    // Auto-fill room code from URL param
     const urlCode = new URLSearchParams(location.search).get('room');
     if (urlCode) codeInput.value = urlCode.toUpperCase();
 
@@ -64,15 +61,32 @@
       return name;
     }
 
-    document.getElementById('create-btn').addEventListener('click', () => {
+    function getPlayerId() {
+      let id = sessionStorage.getItem('poker-player-id');
+      if (!id) {
+        id = crypto.randomUUID();
+        sessionStorage.setItem('poker-player-id', id);
+      }
+      return id;
+    }
+
+    document.getElementById('create-btn').addEventListener('click', async () => {
       const name = getName();
       if (!name) return;
-      socket.emit('create-room', name, (res) => {
-        if (res.error) return showError(res.error);
+      try {
+        const res = await fetch('/api/rooms/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ playerId: getPlayerId(), name }),
+        });
+        const data = await res.json();
+        if (data.error) return showError(data.error);
         sessionStorage.setItem('poker-name', name);
-        sessionStorage.setItem('poker-room', res.code);
-        location.href = `/room.html?room=${res.code}`;
-      });
+        sessionStorage.setItem('poker-room', data.code);
+        location.href = `/room.html?room=${data.code}`;
+      } catch (e) {
+        showError('Failed to create room');
+      }
     });
 
     document.getElementById('join-btn').addEventListener('click', () => {
@@ -85,7 +99,6 @@
       location.href = `/room.html?room=${code}`;
     });
 
-    // Allow Enter key to submit
     nameInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         if (codeInput.value.trim()) document.getElementById('join-btn').click();
